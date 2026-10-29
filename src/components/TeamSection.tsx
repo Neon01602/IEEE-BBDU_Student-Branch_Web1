@@ -179,7 +179,7 @@ export default function TeamSection() {
                 radius={16}
                 enableTilt
                 intro
-                showUserInfo
+                
                 enableMobileTilt={false}
                 theme="dark"
                 onClick={() => setActiveModalMember(member)}
@@ -258,7 +258,7 @@ export default function TeamSection() {
                     radius={16}
                     enableTilt
                     intro
-                    showUserInfo
+                    
                     enableMobileTilt={false}
                     theme="dark"
                     onContactClick={() => {
