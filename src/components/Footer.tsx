@@ -170,10 +170,6 @@ function Footer({ onNavigate }: FooterProps) {
     { label: 'Home Page', onClick: () => onNavigate('home') },
     { label: 'Events & Highlights', onClick: () => onNavigate('events') },
     { label: 'Office Bearers & Team', onClick: () => onNavigate('team') },
-    { label: 'Moments & Gallery', onClick: () => onNavigate('gallery') },
-    { label: 'Newsletters & Research', onClick: () => onNavigate('newsletter') },
-    { label: 'Contact Secretariat', onClick: () => onNavigate('contact') },
-    { label: 'Admin Event Studio', onClick: () => onNavigate('admin-events') },
   ];
 
   // 3. IEEE Official Pages
@@ -191,9 +187,6 @@ function Footer({ onNavigate }: FooterProps) {
   const socials: LinkItem[] = [
     { label: 'LinkedIn (IEEE BBDU)', href: 'https://www.linkedin.com/company/ieee-bbdu/' },
     { label: 'Instagram (@ieeebbdu)', href: 'https://www.instagram.com/ieeebbdu' },
-    { label: 'GitHub Organization', href: 'https://github.com' },
-    { label: 'Discord Community', href: 'https://discord.com' },
-    { label: 'YouTube Channel', href: 'https://youtube.com' },
   ];
 
   // 5. Branch Highlights & Code
