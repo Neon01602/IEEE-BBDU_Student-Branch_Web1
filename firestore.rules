@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function isValidEvent(data) {
+      return data.title is string && data.title.size() <= 200
+        && data.category is string && data.category.size() <= 50
+        && (data.status == 'past' || data.status == 'upcoming')
+        && data.date is string && data.date.size() <= 100
+        && data.venue is string && data.venue.size() <= 300
+        && data.description is string && data.description.size() <= 10000;
+    }
+
+    // Events collection: Publicly readable for all visitors
+    match /events/{eventId} {
+      allow read: if true;
+      allow create, update: if isValidId(eventId) && isValidEvent(request.resource.data);
+      allow delete: if isValidId(eventId);
+    }
+    
+    // Connection test document
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+    
+    // Fallback deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

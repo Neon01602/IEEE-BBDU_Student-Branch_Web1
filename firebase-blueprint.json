@@ -1,0 +1,83 @@
+{
+  "entities": {
+    "Event": {
+      "title": "Event",
+      "description": "IEEE BBDU Student Branch event record with details, venue, winners, and pictures",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique event identifier"
+        },
+        "title": {
+          "type": "string",
+          "description": "Event headline title",
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "description": "Category of the event"
+        },
+        "status": {
+          "type": "string",
+          "description": "Event status, past or upcoming",
+          "enum": ["past", "upcoming"]
+        },
+        "date": {
+          "type": "string",
+          "description": "Date when the event took place or is scheduled",
+          "maxLength": 100
+        },
+        "time": {
+          "type": "string",
+          "description": "Event timing hours",
+          "maxLength": 100
+        },
+        "venue": {
+          "type": "string",
+          "description": "Campus venue or hall where the event happened",
+          "maxLength": 300
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed summary about the event",
+          "maxLength": 5000
+        },
+        "image": {
+          "type": "string",
+          "description": "Cover image URL of the event",
+          "maxLength": 2000
+        },
+        "winners": {
+          "type": "array",
+          "description": "List of winners and awards for the event"
+        },
+        "relatedPictures": {
+          "type": "array",
+          "description": "Array of gallery photo URLs related to the event"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Search and topic tags"
+        },
+        "recapNotes": {
+          "type": "array",
+          "description": "Key event milestones and takeaways"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["title", "category", "status", "date", "venue", "description"]
+    }
+  },
+  "firestore": {
+    "/events/{eventId}": {
+      "schema": {
+        "$ref": "#/entities/Event"
+      },
+      "description": "Publicly viewable IEEE BBDU events published by branch administrators"
+    }
+  }
+}

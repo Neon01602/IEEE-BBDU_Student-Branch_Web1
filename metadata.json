@@ -1,0 +1,6 @@
+{
+  "name": "IEEE BBDU Student Branch",
+  "description": "Official portal of IEEE Student Branch at Babu Banarasi Das University, showcasing events, team members, mission, gallery, and student community initiatives.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
