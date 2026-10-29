@@ -36,7 +36,7 @@ export default function AdminEventsPage({ onNavigate }: AdminEventsPageProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return sessionStorage.getItem('ieee_admin_authed') === 'true';
   });
-  const [adminUsername, setAdminUsername] = useState('ahmadaieng17@gmail.com');
+  const [adminUsername, setAdminUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState('');
