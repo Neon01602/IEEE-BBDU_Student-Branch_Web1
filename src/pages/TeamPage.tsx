@@ -353,7 +353,7 @@ export default function TeamPage({ onNavigate }: TeamPageProps) {
 
                 {/* Direct Action Buttons */}
                 <div className="pt-3 sm:pt-4 border-t border-slate-800 flex flex-wrap items-center gap-2 sm:gap-3">
-                  {activeModalMember.email && (
+                  {activeModalMember.email && activeModalMember.wing === 'Faculty Counsellor' && (
                     <a
                       href={`mailto:${activeModalMember.email}`}
                       className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl text-[11px] sm:text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 sm:gap-2 transition-all shadow-md active:scale-95"
