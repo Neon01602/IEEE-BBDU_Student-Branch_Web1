@@ -110,7 +110,7 @@ const ProfileCard = ({
   status = 'Online',
   statusColor = '#22c55e',
   contactText = 'Contact',
-  showUserInfo = true,
+  showUserInfo = false,
   onContactClick,
   onClick,
   theme = 'dark',
