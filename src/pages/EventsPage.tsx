@@ -101,10 +101,6 @@ export default function EventsPage({ onNavigate }: EventsPageProps) {
 
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-12">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-cyan-400 text-xs font-mono uppercase tracking-wider mb-3 shadow-sm">
-            <Calendar className="w-3.5 h-3.5" />
-            <span>Events & Programs</span>
-          </div>
           <h1 className="font-chillax text-3xl sm:text-4xl md:text-5xl font-normal text-white tracking-tight leading-tight">
             Workshops, Hackathons &{' '}
             <span className="font-medium text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-purple-400">
