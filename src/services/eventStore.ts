@@ -16,47 +16,64 @@ const UPDATE_EVENT_NAME = 'ieee-events-updated';
 // In-memory cache
 let cachedEvents: EventItem[] = [];
 
+const MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
 /**
- * Computes a standardized numerical push timestamp for ranking events.
- * Ranks strictly by the most recent push (updatedAt, createdAt, or ID timestamp).
+ * Parses the free-text event date (e.g. "July 3rd, 2026", "3 July 2026",
+ * "July 3-5, 2026", "October 2025", "2026-07-03", "03/07/2026") into a UTC
+ * timestamp. Returns NaN when it cannot be understood.
+ */
+export function parseEventDate(input?: string): number {
+  if (!input) return NaN;
+  const s = input.toLowerCase().replace(/(\d+)(st|nd|rd|th)\b/g, '$1').replace(/,/g, ' ').trim();
+
+  // ISO: 2026-07-03
+  let m = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3]);
+
+  // dd/mm/yyyy or dd.mm.yyyy
+  m = s.match(/(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/);
+  if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1]);
+
+  // Month name + year (+ optional day, first number found is used for ranges)
+  const monthMatch = s.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*/);
+  const yearMatch = s.match(/\b(\d{4})\b/);
+  if (monthMatch && yearMatch) {
+    const dayMatch = s.replace(yearMatch[1], ' ').match(/\b(\d{1,2})\b/);
+    const day = dayMatch ? Math.min(Math.max(+dayMatch[1], 1), 31) : 1;
+    return Date.UTC(+yearMatch[1], MONTHS[monthMatch[1]], day);
+  }
+
+  const fallback = Date.parse(input);
+  return isNaN(fallback) ? NaN : fallback;
+}
+
+/**
+ * Sort key used everywhere events are ranked. Sorting DESCENDING on this key
+ * gives: newest event date first, oldest last. If two events share the same
+ * date, the one pushed/updated most recently comes first.
  */
 export function getEventPushTimestamp(event: EventItem): number {
   if (!event) return 0;
-  
-  // 1. If an event was updated/re-pushed, check updatedAt
-  let updateTime = 0;
-  if (event.updatedAt) {
-    const parsed = new Date(event.updatedAt).getTime();
-    if (!isNaN(parsed)) updateTime = parsed;
-  }
 
-  // 2. Check createdAt
-  let createTime = 0;
-  if (event.createdAt) {
-    const parsed = new Date(event.createdAt).getTime();
-    if (!isNaN(parsed)) createTime = parsed;
-  }
-
-  // 3. Check evt-<timestamp> format generated at creation time
-  let idTime = 0;
+  // Push time (used only as a tie-breaker)
+  const times: number[] = [];
+  if (event.updatedAt) times.push(new Date(event.updatedAt).getTime());
+  if (event.createdAt) times.push(new Date(event.createdAt).getTime());
   if (event.id && event.id.startsWith('evt-')) {
-    const parsed = parseInt(event.id.replace('evt-', ''), 10);
-    if (!isNaN(parsed) && parsed > 1000000000000) {
-      idTime = parsed;
-    }
+    const n = parseInt(event.id.replace('evt-', ''), 10);
+    if (!isNaN(n) && n > 1000000000000) times.push(n);
   }
+  const pushSeconds = Math.floor(Math.max(0, ...times.filter((t) => !isNaN(t))) / 1000);
 
-  // 4. Return the latest push timestamp among update, creation, or id
-  const highest = Math.max(updateTime, createTime, idTime);
-  if (highest > 0) return highest;
+  // Event date (primary key), in whole days since 1970
+  const dateMs = parseEventDate(event.date);
+  const days = isNaN(dateMs) ? 0 : Math.floor(dateMs / 86400000);
 
-  // 5. Fallback to event date
-  if (event.date) {
-    const parsed = Date.parse(event.date);
-    if (!isNaN(parsed)) return parsed;
-  }
-
-  return 0;
+  return days * 1e10 + pushSeconds;
 }
 
 // Initialize cache from localStorage if available
@@ -91,7 +108,7 @@ function initRealtimeListener() {
           });
         });
 
-        // Rank strictly according to latest pushed first
+        // Rank by event date, newest first
         liveEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
 
         cachedEvents = liveEvents;
@@ -154,7 +171,7 @@ export const eventStore = {
       updatedAt: event.updatedAt || nowIso
     };
 
-    // Optimistically update local cache and sort by latest pushed
+    // Optimistically update local cache and sort by event date
     cachedEvents = [eventWithTimestamp, ...cachedEvents.filter(e => e.id !== event.id)];
     cachedEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
     try {
@@ -193,7 +210,7 @@ export const eventStore = {
     return eventWithTimestamp;
   },
 
-  // Update event in Firebase Firestore (stamps updatedAt and re-ranks to latest pushed)
+  // Update event in Firebase Firestore (stamps updatedAt and re-ranks by event date)
   async updateEvent(event: EventItem): Promise<void> {
     const updatedWithTimestamp: EventItem = {
       ...event,
