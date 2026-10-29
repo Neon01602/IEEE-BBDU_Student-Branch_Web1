@@ -111,9 +111,6 @@ export default function EventsPage({ onNavigate }: EventsPageProps) {
               Recent Highlights
             </span>
           </h1>
-          <p className="mt-4 sm:mt-5 text-base sm:text-lg text-slate-400 leading-relaxed max-w-2xl mx-auto">
-            Explore live event recaps, winning teams, photo galleries, and technical symposiums at IEEE BBDU Student Branch.
-          </p>
         </div>
 
         {/* Filter Controls & Search */}
