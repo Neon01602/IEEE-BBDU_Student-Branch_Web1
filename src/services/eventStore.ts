@@ -3,7 +3,6 @@ import {
   doc, 
   setDoc, 
   deleteDoc, 
-  onSnapshot, 
   getDocs 
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -12,19 +11,57 @@ import { compressDataUrlIfNeeded } from '../utils/imageCompressor';
 
 const STORAGE_KEY = 'ieee_bbdu_events_store';
 const UPDATE_EVENT_NAME = 'ieee-events-updated';
+const LAST_FETCH_KEY = 'ieee_bbdu_events_last_fetch';
 
-// In-memory cache
+// 3-minute in-session cache debounce: Prevents repeated Firestore queries when navigating tabs/pages
+const READ_CACHE_TTL_MS = 3 * 60 * 1000;
+
+// In-memory cache holding ONLY the user's real Firestore events
 let cachedEvents: EventItem[] = [];
 
-const MONTHS: Record<string, number> = {
-  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-};
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+// Edit distance, used to forgive typos like "Spetember"
+function editDistance(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+// Returns month index 0-11 for "july", "jul", "sept", or a typo like "spetember"
+function findMonth(s: string): number {
+  const words = s.match(/[a-z]+/g) || [];
+  for (const w of words) {
+    if (w.length >= 3) {
+      const idx = MONTH_NAMES.findIndex((name) => name.startsWith(w));
+      if (idx !== -1) return idx;
+    }
+  }
+  for (const w of words) {
+    if (w.length >= 4) {
+      const idx = MONTH_NAMES.findIndex((name) => name[0] === w[0] && editDistance(w, name) <= 2);
+      if (idx !== -1) return idx;
+    }
+  }
+  return -1;
+}
 
 /**
  * Parses the free-text event date (e.g. "July 3rd, 2026", "3 July 2026",
  * "July 3-5, 2026", "October 2025", "2026-07-03", "03/07/2026") into a UTC
- * timestamp. Returns NaN when it cannot be understood.
+ * timestamp. Tolerates misspelt months. Returns NaN when it cannot be understood.
  */
 export function parseEventDate(input?: string): number {
   if (!input) return NaN;
@@ -38,17 +75,17 @@ export function parseEventDate(input?: string): number {
   m = s.match(/(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/);
   if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1]);
 
-  // Month name + year (+ optional day, first number found is used for ranges)
-  const monthMatch = s.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*/);
+  // Month name + year (+ optional day; for ranges like "8-10" the first day is used)
+  const month = findMonth(s);
   const yearMatch = s.match(/\b(\d{4})\b/);
-  if (monthMatch && yearMatch) {
+  if (month !== -1 && yearMatch) {
     const dayMatch = s.replace(yearMatch[1], ' ').match(/\b(\d{1,2})\b/);
     const day = dayMatch ? Math.min(Math.max(+dayMatch[1], 1), 31) : 1;
-    return Date.UTC(+yearMatch[1], MONTHS[monthMatch[1]], day);
+    return Date.UTC(+yearMatch[1], month, day);
   }
 
-  const fallback = Date.parse(input);
-  return isNaN(fallback) ? NaN : fallback;
+  // Unreadable: NaN (sorts to the bottom) instead of letting the browser guess wrongly
+  return NaN;
 }
 
 /**
@@ -76,61 +113,93 @@ export function getEventPushTimestamp(event: EventItem): number {
   return days * 1e10 + pushSeconds;
 }
 
-// Initialize cache from localStorage if available
+// Initialize cache from localStorage so previously saved real Firebase events are available instantly
 try {
-  const localData = localStorage.getItem(STORAGE_KEY);
-  if (localData) {
-    cachedEvents = JSON.parse(localData);
+  if (typeof window !== 'undefined') {
+    const localData = localStorage.getItem(STORAGE_KEY);
+    if (localData) {
+      const parsed = JSON.parse(localData);
+      // Filter out any mock/seed events if they were cached previously
+      if (Array.isArray(parsed)) {
+        cachedEvents = parsed.filter(e => !e.id?.startsWith('evt-crack-the-case') && !e.id?.startsWith('evt-toonforge-ai') && !e.id?.startsWith('evt-startup-pitch-2026') && !e.id?.startsWith('evt-the-ai-talk-show') || e.createdAt !== '2026-10-06T10:00:00.000Z');
+      }
+    }
     cachedEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
   }
 } catch (e) {
   console.warn('Could not read cached events from localStorage', e);
+  cachedEvents = [];
 }
 
-// Global Firestore Real-Time Listener
-let isListenerAttached = false;
+let isFetchInProgress = false;
 
-function initRealtimeListener() {
-  if (isListenerAttached || typeof window === 'undefined') return;
-  isListenerAttached = true;
+/**
+ * Fetches the user's real events from Firebase Firestore.
+ * Caches them in localStorage so subsequent page visits avoid burning read quota.
+ */
+async function fetchFirebaseEvents(force: boolean = false): Promise<EventItem[]> {
+  if (typeof window === 'undefined' || isFetchInProgress) {
+    return [...cachedEvents];
+  }
+
+  const now = Date.now();
+
+  // If not forced and cache was fetched recently, return cached events to save Firestore read quota
+  if (!force && cachedEvents.length > 0) {
+    try {
+      const lastFetch = Number(sessionStorage.getItem(LAST_FETCH_KEY) || '0');
+      if (now - lastFetch < READ_CACHE_TTL_MS) {
+        return [...cachedEvents];
+      }
+    } catch {}
+  }
+
+  isFetchInProgress = true;
 
   try {
     const eventsRef = collection(db, 'events');
-    onSnapshot(
-      eventsRef,
-      (snapshot) => {
-        const liveEvents: EventItem[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as EventItem;
-          liveEvents.push({
-            ...data,
-            id: docSnap.id
-          });
-        });
+    const snapshot = await getDocs(eventsRef);
 
-        // Rank by event date, newest first
-        liveEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
+    const cloudEvents: EventItem[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data() as EventItem;
+      cloudEvents.push({
+        ...data,
+        id: docSnap.id
+      });
+    });
 
-        cachedEvents = liveEvents;
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(liveEvents));
-        } catch (e) {
-          console.warn('Failed to cache events in localStorage', e);
-        }
+    cloudEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
+    cachedEvents = cloudEvents;
 
-        window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: liveEvents }));
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'events');
-      }
-    );
-  } catch (err) {
-    console.error('Error attaching Firestore listener for events', err);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudEvents));
+      sessionStorage.setItem(LAST_FETCH_KEY, String(now));
+    } catch (e) {
+      console.warn('Failed to persist events to localStorage', e);
+    }
+
+    window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: cloudEvents }));
+    return cloudEvents;
+  } catch (error: any) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+
+    if (errMsg.includes('Quota exceeded') || errMsg.includes('resource-exhausted')) {
+      console.warn('[EventStore] Firebase daily read quota currently exceeded. Serving previously loaded Firebase events from cache.');
+    } else {
+      console.warn('[EventStore] Notice while fetching events from Firebase:', errMsg);
+    }
+    // Return existing cached events from localStorage so UI does not crash
+    return [...cachedEvents];
+  } finally {
+    isFetchInProgress = false;
   }
 }
 
-// Attach listener immediately
-initRealtimeListener();
+// Automatically fetch real Firebase events on boot
+if (typeof window !== 'undefined') {
+  fetchFirebaseEvents(false).catch(() => {});
+}
 
 // Helper to recursively remove all undefined values before passing to Firestore
 function cleanFirestoreData(obj: any): any {
@@ -156,10 +225,15 @@ function cleanFirestoreData(obj: any): any {
 }
 
 export const eventStore = {
-  // Retrieve events (from cache synchronously, updated automatically via real-time Firestore)
+  // Retrieve events: Returns cached Firebase events immediately, fetches latest in background
   getEvents(): EventItem[] {
-    initRealtimeListener();
+    fetchFirebaseEvents(false).catch(() => {});
     return [...cachedEvents].sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
+  },
+
+  // Explicitly fetch latest events from Firebase Firestore
+  async refreshEvents(force: boolean = true): Promise<EventItem[]> {
+    return await fetchFirebaseEvents(force);
   },
 
   // Save/Publish an event to Firebase Firestore
@@ -171,7 +245,7 @@ export const eventStore = {
       updatedAt: event.updatedAt || nowIso
     };
 
-    // Optimistically update local cache and sort by event date
+    // 1. Optimistically update local cache and sort by latest pushed
     cachedEvents = [eventWithTimestamp, ...cachedEvents.filter(e => e.id !== event.id)];
     cachedEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
     try {
@@ -181,12 +255,12 @@ export const eventStore = {
     }
     window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: cachedEvents }));
 
-    // Write to Firebase Firestore (cleaned of any undefined values and guarded against >800KB size)
+    // 2. Write to Firebase Firestore
     try {
       const docRef = doc(db, 'events', event.id);
       const cleanedData = cleanFirestoreData(eventWithTimestamp);
 
-      // Guard against Firestore 1MB document size limit (1,048,576 bytes)
+      // Guard against Firestore 1MB document size limit
       const initialSize = JSON.stringify(cleanedData).length;
       if (initialSize > 600 * 1024) {
         if (cleanedData.image && typeof cleanedData.image === 'string' && cleanedData.image.startsWith('data:image')) {
@@ -203,21 +277,26 @@ export const eventStore = {
 
       await setDoc(docRef, cleanedData);
       console.log(`Event ${event.id} successfully saved to Firebase Firestore.`);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `events/${event.id}`);
+    } catch (error: any) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      if (errMsg.includes('Quota exceeded') || errMsg.includes('resource-exhausted')) {
+        console.warn(`[EventStore] Firebase daily quota reached. Event ${event.id} is saved locally and will sync when quota resets.`);
+      } else {
+        handleFirestoreError(error, OperationType.WRITE, `events/${event.id}`);
+      }
     }
 
     return eventWithTimestamp;
   },
 
-  // Update event in Firebase Firestore (stamps updatedAt and re-ranks by event date)
+  // Update event in Firebase Firestore
   async updateEvent(event: EventItem): Promise<void> {
     const updatedWithTimestamp: EventItem = {
       ...event,
       updatedAt: new Date().toISOString()
     };
 
-    // Optimistic local update and re-rank
+    // 1. Optimistic local update and re-rank
     cachedEvents = cachedEvents.map(e => e.id === event.id ? updatedWithTimestamp : e);
     cachedEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
     try {
@@ -227,11 +306,11 @@ export const eventStore = {
     }
     window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: cachedEvents }));
 
+    // 2. Sync modification to Firebase Firestore
     const docRef = doc(db, 'events', event.id);
     try {
       const cleanedData = cleanFirestoreData(updatedWithTimestamp);
 
-      // Guard against Firestore 1MB document size limit (1,048,576 bytes)
       const initialSize = JSON.stringify(cleanedData).length;
       if (initialSize > 600 * 1024) {
         if (cleanedData.image && typeof cleanedData.image === 'string' && cleanedData.image.startsWith('data:image')) {
@@ -248,14 +327,18 @@ export const eventStore = {
 
       await setDoc(docRef, cleanedData, { merge: true });
       console.log(`Event ${event.id} successfully updated in Firebase Firestore.`);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `events/${event.id}`);
+    } catch (error: any) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      if (errMsg.includes('Quota exceeded') || errMsg.includes('resource-exhausted')) {
+        console.warn(`[EventStore] Firebase write quota paused. Event ${event.id} updated locally.`);
+      } else {
+        handleFirestoreError(error, OperationType.UPDATE, `events/${event.id}`);
+      }
     }
   },
 
   // Delete event from Firebase Firestore
   async deleteEvent(id: string): Promise<void> {
-    // Optimistic local update
     cachedEvents = cachedEvents.filter(e => e.id !== id);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cachedEvents));
@@ -264,19 +347,22 @@ export const eventStore = {
     }
     window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: cachedEvents }));
 
-    // Remove from Firestore
     try {
       const docRef = doc(db, 'events', id);
       await deleteDoc(docRef);
       console.log(`Event ${id} removed from Firebase Firestore.`);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `events/${id}`);
+    } catch (error: any) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      if (errMsg.includes('Quota exceeded') || errMsg.includes('resource-exhausted')) {
+        console.warn(`[EventStore] Cloud deletion paused by quota. Event ${id} removed locally.`);
+      } else {
+        handleFirestoreError(error, OperationType.DELETE, `events/${id}`);
+      }
     }
   },
 
-  // Subscribe to real-time updates
+  // Subscribe to updates across components
   subscribe(callback: (events: EventItem[]) => void): () => void {
-    initRealtimeListener();
     if (typeof window === 'undefined') return () => {};
     const handler = (e: Event) => {
       const customEvent = e as CustomEvent<EventItem[]>;
