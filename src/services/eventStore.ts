@@ -3,7 +3,10 @@ import {
   doc, 
   setDoc, 
   deleteDoc, 
-  getDocs 
+  getDocs,
+  getCountFromServer,
+  query,
+  where
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { EventItem } from '../types';
@@ -11,10 +14,9 @@ import { compressDataUrlIfNeeded } from '../utils/imageCompressor';
 
 const STORAGE_KEY = 'ieee_bbdu_events_store';
 const UPDATE_EVENT_NAME = 'ieee-events-updated';
-const LAST_FETCH_KEY = 'ieee_bbdu_events_last_fetch';
 
-// 3-minute in-session cache debounce: Prevents repeated Firestore queries when navigating tabs/pages
-const READ_CACHE_TTL_MS = 3 * 60 * 1000;
+// Safety margin (clock differences between devices) when asking Firestore for "newer than cache" events
+const SYNC_MARGIN_MS = 10 * 60 * 1000;
 
 // In-memory cache holding ONLY the user's real Firestore events
 let cachedEvents: EventItem[] = [];
@@ -133,54 +135,80 @@ try {
 
 let isFetchInProgress = false;
 
+function persistAndNotify() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cachedEvents));
+  } catch (e) {
+    console.warn('Failed to persist events to localStorage', e);
+  }
+  window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: cachedEvents }));
+}
+
+// Downloads every event from Firestore and replaces the cache (first visit, forced refresh, or a delete was detected)
+async function fullFetch(): Promise<EventItem[]> {
+  const snapshot = await getDocs(collection(db, 'events'));
+  const cloudEvents: EventItem[] = [];
+  snapshot.forEach((docSnap) => {
+    const data = docSnap.data() as EventItem;
+    cloudEvents.push({ ...data, id: docSnap.id });
+  });
+  cloudEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
+  cachedEvents = cloudEvents;
+  persistAndNotify();
+  return cachedEvents;
+}
+
 /**
- * Fetches the user's real events from Firebase Firestore.
- * Caches them in localStorage so subsequent page visits avoid burning read quota.
+ * Syncs the cache with Firebase Firestore.
+ * - First visit (empty cache): downloads everything once.
+ * - Later visits / refreshes: asks Firestore ONLY for events newer than the cache and adds just those.
+ *   A cheap count check detects deleted events (then a full re-download happens).
+ * - Never runs on a timer. It runs once per page load/refresh, or when forced.
  */
 async function fetchFirebaseEvents(force: boolean = false): Promise<EventItem[]> {
   if (typeof window === 'undefined' || isFetchInProgress) {
     return [...cachedEvents];
   }
 
-  const now = Date.now();
-
-  // If not forced and cache was fetched recently, return cached events to save Firestore read quota
-  if (!force && cachedEvents.length > 0) {
-    try {
-      const lastFetch = Number(sessionStorage.getItem(LAST_FETCH_KEY) || '0');
-      if (now - lastFetch < READ_CACHE_TTL_MS) {
-        return [...cachedEvents];
-      }
-    } catch {}
-  }
-
   isFetchInProgress = true;
 
   try {
-    const eventsRef = collection(db, 'events');
-    const snapshot = await getDocs(eventsRef);
-
-    const cloudEvents: EventItem[] = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data() as EventItem;
-      cloudEvents.push({
-        ...data,
-        id: docSnap.id
-      });
-    });
-
-    cloudEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
-    cachedEvents = cloudEvents;
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudEvents));
-      sessionStorage.setItem(LAST_FETCH_KEY, String(now));
-    } catch (e) {
-      console.warn('Failed to persist events to localStorage', e);
+    if (force || cachedEvents.length === 0) {
+      return await fullFetch();
     }
 
-    window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: cloudEvents }));
-    return cloudEvents;
+    // Newest change we already have cached
+    let cursorMs = 0;
+    for (const e of cachedEvents) {
+      const t = new Date(e.updatedAt || e.createdAt || '').getTime();
+      if (!isNaN(t) && t > cursorMs) cursorMs = t;
+    }
+    if (cursorMs === 0) {
+      return await fullFetch();
+    }
+
+    // 1. Only events added/edited after what the cache already has
+    const eventsRef = collection(db, 'events');
+    const since = new Date(cursorMs - SYNC_MARGIN_MS).toISOString();
+    const newer = await getDocs(query(eventsRef, where('updatedAt', '>', since)));
+
+    if (!newer.empty) {
+      const byId = new Map(cachedEvents.map((e) => [e.id, e]));
+      newer.forEach((docSnap) => {
+        byId.set(docSnap.id, { ...(docSnap.data() as EventItem), id: docSnap.id });
+      });
+      cachedEvents = Array.from(byId.values());
+      cachedEvents.sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
+      persistAndNotify();
+    }
+
+    // 2. Cheap check for deleted events: server count must match cache
+    const countSnap = await getCountFromServer(eventsRef);
+    if (countSnap.data().count !== cachedEvents.length) {
+      return await fullFetch();
+    }
+
+    return [...cachedEvents];
   } catch (error: any) {
     const errMsg = error instanceof Error ? error.message : String(error);
 
@@ -196,7 +224,7 @@ async function fetchFirebaseEvents(force: boolean = false): Promise<EventItem[]>
   }
 }
 
-// Automatically fetch real Firebase events on boot
+// Sync once each time the website is opened or refreshed (not on a timer, not on tab/page navigation)
 if (typeof window !== 'undefined') {
   fetchFirebaseEvents(false).catch(() => {});
 }
@@ -225,13 +253,12 @@ function cleanFirestoreData(obj: any): any {
 }
 
 export const eventStore = {
-  // Retrieve events: Returns cached Firebase events immediately, fetches latest in background
+  // Retrieve events: returns the cached events immediately (no Firebase call)
   getEvents(): EventItem[] {
-    fetchFirebaseEvents(false).catch(() => {});
     return [...cachedEvents].sort((a, b) => getEventPushTimestamp(b) - getEventPushTimestamp(a));
   },
 
-  // Explicitly fetch latest events from Firebase Firestore
+  // Explicitly re-download all events from Firebase Firestore
   async refreshEvents(force: boolean = true): Promise<EventItem[]> {
     return await fetchFirebaseEvents(force);
   },
