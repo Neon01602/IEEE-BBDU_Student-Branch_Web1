@@ -500,6 +500,26 @@ function Footer({ onNavigate }: FooterProps) {
         </div>
       </div>
 
+      {/* ========================================================================= */}
+      {/* 3. CREDIT STRIP: thin, grey, same bg. Left-aligned on mobile, centered on PC */}
+      {/* ========================================================================= */}
+      <div className="w-full bg-[#0a0a0c] border-t border-zinc-700/25 px-5 sm:px-8 py-2.5 text-left lg:text-center">
+        <p
+          className="text-[10px] sm:text-[11px] tracking-wide text-zinc-500"
+          style={{ fontFamily: "'Chillax', system-ui, sans-serif", fontWeight: 300 }}
+        >
+          Designed &amp; developed by{' '}
+          <a
+            href="https://github.com/Neon01602"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            Ahmad Abdullah
+          </a>
+        </p>
+      </div>
+
     </footer>
   );
 }
