@@ -506,7 +506,7 @@ function Footer({ onNavigate }: FooterProps) {
       <div className="w-full bg-[#0a0a0c] border-t border-zinc-700/25 px-5 sm:px-8 py-2.5 text-left lg:text-center">
         <p
           className="text-[10px] sm:text-[11px] tracking-wide text-zinc-500"
-          style={{ fontFamily: "'Chillax', system-ui, sans-serif", fontWeight: 300 }}
+          style={{ fontFamily: "'Google Sans', system-ui, sans-serif", fontWeight: 500 }}
         >
           Designed &amp; developed by{' '}
           <a
