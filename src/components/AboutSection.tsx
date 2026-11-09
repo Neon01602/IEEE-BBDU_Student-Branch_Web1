@@ -32,10 +32,7 @@ export default function AboutSection({ onNavigate }: AboutSectionProps) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Section Header */}
         <div className="mb-14 text-center sm:text-left">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-cyan-400 text-xs font-mono uppercase tracking-wider mb-4">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>About IEEE BBDU Student Branch</span>
-          </div>
+          
 
           <h2 className="font-chillax text-3xl sm:text-4xl md:text-5xl font-normal text-white tracking-tight leading-tight max-w-4xl">
             Advancing Technology for Humanity &{' '}
@@ -111,9 +108,7 @@ export default function AboutSection({ onNavigate }: AboutSectionProps) {
             {/* Top-Right Card: Core Mission & Strategic Vision + Real Image with Opacity Filter */}
             <div className="p-8 sm:p-12 flex flex-col justify-between bg-gradient-to-b from-[#090d16]/50 to-[#07090e]/50">
               <div>
-                <div className="text-xs font-mono uppercase tracking-wider text-cyan-400 mb-2">
-                  Our Core Mission
-                </div>
+               
                 <h3 className="text-2xl sm:text-3xl font-normal text-white tracking-tight">
                   Inspiring Technical Ingenuity
                 </h3>
@@ -150,9 +145,7 @@ export default function AboutSection({ onNavigate }: AboutSectionProps) {
           <div className="p-8 sm:p-12 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-gradient-to-b from-[#07090e]/80 to-[#05070c]/80">
             <div className="lg:col-span-6 space-y-6">
               <div>
-                <div className="text-xs font-mono uppercase tracking-wider text-purple-400 mb-1.5">
-                  Affiliated Chapters
-                </div>
+                
                 <h3 className="text-2xl sm:text-3xl font-normal text-white tracking-tight">
                   Societies & Affinity Groups
                 </h3>
@@ -228,10 +221,7 @@ export default function AboutSection({ onNavigate }: AboutSectionProps) {
         {/* Join Us Section: Branch Counsellor Detail */}
         <div id="join-us-section" className="p-8 sm:p-12 rounded-3xl bg-zinc-950/90 border border-zinc-800 shadow-2xl relative overflow-hidden">
           <div className="max-w-3xl mx-auto text-center mb-8">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-cyan-400 text-xs font-mono uppercase tracking-wider mb-3">
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>Join Us</span>
-            </div>
+            
             <h3 className="font-chillax text-2xl sm:text-3xl md:text-4xl font-normal text-white">
               Connect with Our Branch Counsellor
             </h3>
